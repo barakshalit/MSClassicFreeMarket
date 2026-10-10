@@ -7,8 +7,11 @@ import tkinter as tk
 from tkinter import filedialog
 import numpy as np
 import os
+from dotenv import load_dotenv # NEW
 
 # --- CONFIGURATION ---
+load_dotenv() # NEW
+API_KEY = os.environ.get("API_KEY")
 SCRIPT_URL = os.environ.get("GOOGLE_SHEET")
 PROCESS_EVERY_X_SECONDS = 1 
 
@@ -185,8 +188,19 @@ def parse_maple_text(ocr_results, gray_img):
 
 def send_to_sheets(items):
     print(f"\nSending {len(items)} unique records to Database...")
+    
+    # Bundle the token and the data together
+    payload = {
+        "token": os.environ.get("MAPLE_API_KEY"),
+        "items": items
+    }
+    
     try:
-        response = requests.post(SCRIPT_URL, data=json.dumps(items), headers={"Content-Type": "text/plain;charset=utf-8"})
+        response = requests.post(
+            SCRIPT_URL, 
+            data=json.dumps(payload), # Send the bundled payload
+            headers={"Content-Type": "text/plain;charset=utf-8"}
+        )
         print("Server Response:", response.text)
     except Exception as e:
         print("Failed to send data:", e)
