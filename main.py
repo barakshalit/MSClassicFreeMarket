@@ -25,6 +25,35 @@ def get_video_file():
     )
     return file_path
 
+def normalize_item_name(raw_name):
+    # EXACT WORD DICTIONARY
+    # Add single word mistakes here (Left side must be completely lowercase)
+    word_corrections = {
+        "bilver": "Silver",
+        "ddithril": "Mithril",
+        "8ap": "Sap",
+        "0f": "of"
+    }
+
+    # Strip out random junk characters first
+    clean_name = re.sub(r'[^a-zA-Z0-9\s\'-]', ' ', raw_name)
+    clean_name = re.sub(r'^(\d+|[a-zA-Z]{1,2})\s+', '', clean_name).strip()
+
+    # Split the name into single words and check each one
+    words = clean_name.split()
+    normalized_words = []
+    
+    for word in words:
+        lower_word = word.lower()
+        # If the specific word is in the dictionary, replace it
+        if lower_word in word_corrections:
+            normalized_words.append(word_corrections[lower_word])
+        else:
+            normalized_words.append(word)
+            
+    # Stitch the words back together into the full item name
+    return " ".join(normalized_words)
+
 def process_video():
     video_path = get_video_file()
     
@@ -33,7 +62,7 @@ def process_video():
         return
 
     print(f"Loading EasyOCR model for: {video_path}...")
-    reader = easyocr.Reader(['en'], gpu=False)
+    reader = easyocr.Reader(['en'], gpu=True)
     
     cap = cv2.VideoCapture(video_path)
     if not cap.isOpened():
@@ -112,7 +141,7 @@ def process_video():
         
         # 1. Upscale the image 2x so the letters are larger
         large_gray = cv2.resize(item_gray, None, fx=2, fy=2, interpolation=cv2.INTER_CUBIC)
-        
+              
         # 2. Apply CLAHE to locally darken faint gray text without blowing out the black text
         clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8, 8))
         enhanced_gray = clahe.apply(large_gray)
@@ -174,8 +203,8 @@ def parse_maple_text(ocr_results, gray_img):
             price_num = int(raw_price_str)
             raw_name = lines_info[i-1]["text"]
             
-            clean_name = re.sub(r'[^a-zA-Z0-9\s\'-]', ' ', raw_name)
-            clean_name = re.sub(r'^(\d+|[a-zA-Z]{1,2})\s+', '', clean_name).strip()
+            # ---> THIS CALLS THE NEW FUNCTION <---
+            clean_name = normalize_item_name(raw_name) 
             
             is_sold_final = lines_info[i]["is_sold"] or lines_info[i-1]["is_sold"]
             status = "SOLD" if is_sold_final else "LISTED"
@@ -186,12 +215,13 @@ def parse_maple_text(ocr_results, gray_img):
                 
     return items
 
+
 def send_to_sheets(items):
     print(f"\nSending {len(items)} unique records to Database...")
     
     # Bundle the token and the data together
     payload = {
-        "token": os.environ.get("MAPLE_API_KEY"),
+        "token": os.environ.get("API_KEY"),
         "items": items
     }
     
