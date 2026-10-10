@@ -32,7 +32,9 @@ def normalize_item_name(raw_name):
         "bilver": "Silver",
         "ddithril": "Mithril",
         "8ap": "Sap",
-        "0f": "of"
+        "0f": "of",
+        "8nail": "Snail",
+        "wwatch": "Watch"
     }
 
     # Strip out random junk characters first
@@ -141,7 +143,7 @@ def process_video():
         
         # 1. Upscale the image 2x so the letters are larger
         large_gray = cv2.resize(item_gray, None, fx=2, fy=2, interpolation=cv2.INTER_CUBIC)
-              
+
         # 2. Apply CLAHE to locally darken faint gray text without blowing out the black text
         clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8, 8))
         enhanced_gray = clahe.apply(large_gray)
