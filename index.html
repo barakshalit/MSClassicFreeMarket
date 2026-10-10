@@ -43,27 +43,42 @@
 
   <script>
     // --- PASTE YOUR GOOGLE APPS SCRIPT URL HERE ---
-    const SCRIPT_URL = "https://script.google.com/macros/s/AKfycbwdsDlfPKyyDUC9_wz8SFGedQcLp_O5MSown2uvDW_e3No3YDbYWf3YQjIFBlN9vN7I/exec";
+    const SCRIPT_URL = "YOUR_GOOGLE_APPS_SCRIPT_URL_HERE";
 
     async function loadData() {
       try {
+        document.getElementById('loading').innerText = "Fetching data... (If this hangs, check F12 Console)";
+        
         const response = await fetch(SCRIPT_URL);
-        const data = await response.json();
+        
+        // Read the raw response text before trying to parse it as JSON
+        const rawText = await response.text();
+        
+        let data;
+        try {
+          // Attempt to parse the text into a JSON object
+          data = JSON.parse(rawText);
+        } catch (parseError) {
+          // If it fails, print exactly what Google sent back to the screen
+          document.getElementById('loading').innerHTML = `
+            <div style="color: #e74c3c; background: #fadbd8; padding: 10px; border-radius: 5px;">
+              <b>Data Formatting Error:</b> Expected JSON but received the text below. 
+              If this looks like an HTML page, your Apps Script access is not set to "Anyone".
+            </div>
+            <textarea style="width: 100%; height: 200px; margin-top: 10px; font-family: monospace;">${rawText}</textarea>
+          `;
+          console.error("Raw response from Google:", rawText);
+          return;
+        }
         
         const tbody = document.getElementById('tableBody');
         
         data.forEach(row => {
-          if (!row.name) return; // Skip empty rows
+          if (!row.name) return; 
           
           const tr = document.createElement('tr');
-          
-          // Format date nicely
           const date = new Date(row.date).toLocaleDateString() + " " + new Date(row.date).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
-          
-          // Format price with commas
           const formattedPrice = Number(row.price).toLocaleString();
-          
-          // Badge for status
           const statusBadge = row.status === "SOLD" 
             ? `<span class="status-sold">SOLD</span>` 
             : `<span class="status-listed">LISTED</span>`;
@@ -80,14 +95,16 @@
         document.getElementById('loading').style.display = 'none';
         document.getElementById('marketTable').style.display = 'table';
         
-        // Initialize the interactive table
         $('#marketTable').DataTable({
-          "order": [[ 1, "asc" ], [ 2, "asc" ]], // Default sort: By Name, then by Price lowest to highest
+          "order": [[ 1, "asc" ], [ 2, "asc" ]],
           "pageLength": 50
         });
 
       } catch (error) {
-        document.getElementById('loading').innerText = "Error loading data.";
+        document.getElementById('loading').innerHTML = `
+          <div style="color: red; font-weight: bold;">Network Error:</div>
+          <p>${error.message}</p>
+        `;
         console.error(error);
       }
     }
