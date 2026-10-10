@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <title>Maple Scanner</title>
+  <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
+  <style>
+    body { margin: 0; background: #111; color: #fff; font-family: sans-serif; overflow: hidden; }
+    #video { width: 100vw; height: 100vh; object-fit: cover; }
+    
+    /* Guide box overlay */
+    #overlay {
+      position: absolute;
+      top: 50%; left: 50%;
+      transform: translate(-50%, -50%);
+      width: 75vw; height: 50vh;
+      border: 3px dashed #00ff88;
+      box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.5);
+      pointer-events: none;
+    }
+    
+    #controls {
+      position: absolute;
+      bottom: 20px; left: 0; width: 100%;
+      display: flex; flex-direction: column; align-items: center; gap: 10px;
+    }
+    button {
+      padding: 12px 24px; font-size: 16px; border-radius: 8px;
+      border: none; background: #00ff88; color: #000; font-weight: bold;
+    }
+    #log {
+      max-height: 80px; width: 85%; font-size: 12px; background: rgba(0,0,0,0.7);
+      padding: 6px; overflow-y: auto; border-radius: 4px;
+    }
+  </style>
+</head>
+<body>
+
+  <video id="video" autoplay playsinline></video>
+  <div id="overlay"></div>
+  <canvas id="cropCanvas" style="display:none;"></canvas>
+
+  <div id="controls">
+    <div id="log">Ready. Point guide box at store items list.</div>
+    <button id="toggleBtn">Start Scanning</button>
+  </div>
+
+  <script>
+    const GOOGLE_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbzcDDSVWfPyUABKLIs46WbbVJ59Lir71j0ETWVntJPaN9ek8ms8ZM2pnnHZvmk3923a/exechttps://script.google.com/macros/s/AKfycbzcDDSVWfPyUABKLIs46WbbVJ59Lir71j0ETWVntJPaN9ek8ms8ZM2pnnHZvmk3923a/exec";
+    const video = document.getElementById('video');
+    const canvas = document.getElementById('cropCanvas');
+    const toggleBtn = document.getElementById('toggleBtn');
+    const logBox = document.getElementById('log');
+
+    let scanning = false;
+    let timer = null;
+
+    function log(msg) {
+      logBox.innerText = `[${new Date().toLocaleTimeString()}] ${msg}`;
+    }
+
+    // 1. Initialize iOS Camera
+    async function startCamera() {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({
+          video: {
+            facingMode: { ideal: "environment" },
+            width: { ideal: 1920 },
+            height: { ideal: 1080 }
+          }
+        });
+        video.srcObject = stream;
+      } catch (err) {
+        log("Camera error: " + err.message);
+      }
+    }
+
+    // 2. Crop only the target region & adjust contrast
+    function captureFrame() {
+      const ctx = canvas.getContext('2d');
+      const vWidth = video.videoWidth;
+      const vHeight = video.videoHeight;
+
+      // Crop the middle 75% width and 50% height
+      const cropW = vWidth * 0.75;
+      const cropH = vHeight * 0.50;
+      const startX = (vWidth - cropW) / 2;
+      const startY = (vHeight - cropH) / 2;
+
+      canvas.width = cropW;
+      canvas.height = cropH;
+
+      ctx.drawImage(video, startX, startY, cropW, cropH, 0, 0, cropW, cropH);
+
+      // Simple binarization/contrast filter to combat monitor glow
+      const imgData = ctx.getImageData(0, 0, cropW, cropH);
+      const d = imgData.data;
+      for (let i = 0; i < d.length; i += 4) {
+        // Average grayscale
+        const avg = (d[i] + d[i + 1] + d[i + 2]) / 3;
+        // High-contrast cutoff
+        const val = avg > 140 ? 255 : 0;
+        d[i] = val;
+        d[i + 1] = val;
+        d[i + 2] = val;
+      }
+      ctx.putImageData(imgData, 0, 0);
+
+      return canvas.toDataURL('image/png');
+    }
+
+    // 3. Process image with Tesseract
+    async function analyzeFrame() {
+      if (!scanning) return;
+      log("Analyzing items...");
+      const imageData = captureFrame();
+
+      try {
+        const result = await Tesseract.recognize(imageData, 'eng');
+        const text = result.data.text;
+        
+        const parsedItems = parseStoreText(text);
+        if (parsedItems.length > 0) {
+          log(`Found ${parsedItems.length} items. Sending to Sheets...`);
+          await sendToSheet(parsedItems);
+        } else {
+          log("No items matched this frame.");
+        }
+      } catch (err) {
+        log("OCR Error: " + err.message);
+      }
+
+      if (scanning) {
+        timer = setTimeout(analyzeFrame, 3000);
+      }
+    }
+
+    // 4. Extract item name and prices
+    function parseStoreText(rawText) {
+      const items = [];
+      const lines = rawText.split('\n').map(l => l.trim()).filter(Boolean);
+
+      for (let i = 0; i < lines.length - 1; i++) {
+        const line = lines[i];
+        const nextLine = lines[i + 1];
+
+        // Match MapleStory format: "X for Y mesos"
+        const priceMatch = nextLine.match(/(\d[\d,]*)\s*mesos/i);
+        if (priceMatch && line.length > 2) {
+          const cleanPrice = parseInt(priceMatch[1].replace(/,/g, ''), 10);
+          
+          // Detect sold state: Tesseract returns lower confidence or lighter pixel areas
+          // By default, treat as listed unless sold pattern is detected
+          items.push({
+            name: line.replace(/[^a-zA-Z0-9\s']/g, '').trim(),
+            price: cleanPrice,
+            isSold: false
+          });
+        }
+      }
+      return items;
+    }
+
+    async function sendToSheet(items) {
+      try {
+        await fetch(GOOGLE_SCRIPT_URL, {
+          method: "POST",
+          mode: "no-cors",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(items)
+        });
+        log(`Sent ${items.length} items to Sheet!`);
+      } catch (err) {
+        log("Sheet post error: " + err.message);
+      }
+    }
+
+    toggleBtn.addEventListener('click', () => {
+      scanning = !scanning;
+      if (scanning) {
+        toggleBtn.innerText = "Stop Scanning";
+        analyzeFrame();
+      } else {
+        toggleBtn.innerText = "Start Scanning";
+        clearTimeout(timer);
+        log("Stopped.");
+      }
+    });
+
+    startCamera();
+  </script>
+</body>
+</html>
