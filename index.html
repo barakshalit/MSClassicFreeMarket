@@ -2,298 +2,97 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-  <title>Maple Store Scanner</title>
-  <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Maple Market Database</title>
+  
+  <!-- DataTables CSS for awesome sorting/searching -->
+  <link rel="stylesheet" href="https://cdn.datatables.net/1.13.6/css/jquery.dataTables.min.css">
   <style>
-    * { box-sizing: border-box; }
-    body { margin: 0; background: #000; color: #fff; font-family: monospace; overflow: hidden; }
-    
-    #video { width: 100vw; height: 100vh; object-fit: cover; }
-
-    /* Store reticle target */
-    #reticle {
-      position: absolute;
-      top: 30%; left: 50%;
-      transform: translate(-50%, -50%);
-      width: 80vw; height: 40vh;
-      border: 2px solid #00ff66;
-      border-radius: 6px;
-      box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.45);
-      pointer-events: none;
-    }
-    #reticle::after {
-      content: "ALIGN STORE ITEMS HERE";
-      position: absolute;
-      top: 6px; left: 8px;
-      font-size: 11px;
-      color: #00ff66;
-      font-weight: bold;
-      background: rgba(0,0,0,0.6);
-      padding: 2px 6px;
-    }
-
-    /* Thumbnail preview of the captured crop */
-    #previewBox {
-      position: absolute;
-      top: 10px; right: 10px;
-      width: 100px; height: 75px;
-      border: 1px solid #555;
-      background: #222;
-      z-index: 10;
-    }
-    #previewCanvas { width: 100%; height: 100%; object-fit: contain; }
-
-    /* Bottom Control & Log UI */
-    #bottomPanel {
-      position: absolute;
-      bottom: 0; left: 0; width: 100%;
-      height: 45vh;
-      background: rgba(10, 10, 15, 0.92);
-      display: flex; flex-direction: column;
-      border-top: 1px solid #333;
-      padding: 8px;
-    }
-
-    #controls {
-      display: flex; gap: 8px; margin-bottom: 6px;
-    }
-    button {
-      flex: 1; padding: 10px; font-size: 14px; font-weight: bold;
-      border-radius: 4px; border: none; cursor: pointer;
-    }
-    #startBtn { background: #00ff66; color: #000; }
-    #clearBtn { background: #333; color: #aaa; flex: 0.3; }
-
-    #logConsole {
-      flex: 1; overflow-y: auto; background: #050508;
-      border: 1px solid #222; border-radius: 4px; padding: 6px;
-      font-size: 11px; line-height: 1.4; color: #ddd;
-    }
-    .log-info { color: #00d0ff; }
-    .log-success { color: #00ff66; font-weight: bold; }
-    .log-warn { color: #ffcc00; }
-    .log-err { color: #ff4444; font-weight: bold; }
-    .log-raw { color: #888; font-size: 10px; }
+    body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: #f4f4f9; padding: 20px; }
+    .container { max-width: 1000px; margin: 0 auto; background: white; padding: 20px; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
+    h1 { text-align: center; color: #333; }
+    .status-sold { color: white; background: #e74c3c; padding: 3px 8px; border-radius: 4px; font-size: 12px; font-weight: bold;}
+    .status-listed { color: white; background: #2ecc71; padding: 3px 8px; border-radius: 4px; font-size: 12px; font-weight: bold;}
+    .price-cell { font-weight: bold; color: #2c3e50; }
   </style>
 </head>
 <body>
 
-  <video id="video" autoplay playsinline></video>
-  <div id="reticle"></div>
-
-  <div id="previewBox">
-    <canvas id="cropCanvas"></canvas>
+  <div class="container">
+    <h1>Maple Market Database</h1>
+    <p id="loading">Loading database...</p>
+    
+    <table id="marketTable" class="display" style="width:100%; display:none;">
+      <thead>
+        <tr>
+          <th>Date Scanned</th>
+          <th>Item Name</th>
+          <th>Price (Mesos)</th>
+          <th>Status</th>
+        </tr>
+      </thead>
+      <tbody id="tableBody">
+        <!-- Data will be injected here -->
+      </tbody>
+    </table>
   </div>
 
-  <div id="bottomPanel">
-    <div id="controls">
-      <button id="startBtn">Start Scanner</button>
-      <button id="clearBtn">Clear</button>
-    </div>
-    <div id="logConsole"></div>
-  </div>
+  <!-- jQuery and DataTables JS -->
+  <script src="https://code.jquery.com/jquery-3.7.0.min.js"></script>
+  <script src="https://cdn.datatables.net/1.13.6/js/jquery.dataTables.min.js"></script>
 
   <script>
-    // --- CONFIGURE YOUR APPS SCRIPT URL HERE ---
-    const SCRIPT_URL = "https://script.google.com/macros/s/AKfycbyJzxSrHpxf-BNy0ic-bFFDs6M8jCfXb7xeyJnOsmfW87Zyb1eV42yvuZt-F-PXWqpW/exec";
+    // --- PASTE YOUR GOOGLE APPS SCRIPT URL HERE ---
+    const SCRIPT_URL = "YOUR_GOOGLE_APPS_SCRIPT_URL_HERE";
 
-    const video = document.getElementById('video');
-    const canvas = document.getElementById('cropCanvas');
-    const startBtn = document.getElementById('startBtn');
-    const clearBtn = document.getElementById('clearBtn');
-    const consoleEl = document.getElementById('logConsole');
-
-    let isScanning = false;
-    let timer = null;
-    let tesseractWorker = null;
-
-    function addLog(msg, type = "info") {
-      const time = new Date().toTimeString().split(' ')[0];
-      const div = document.createElement('div');
-      div.className = `log-${type}`;
-      div.innerText = `[${time}] ${msg}`;
-      consoleEl.appendChild(div);
-      consoleEl.scrollTop = consoleEl.scrollHeight;
-    }
-
-    clearBtn.addEventListener('click', () => { consoleEl.innerHTML = ''; });
-
-    // Initialize Camera
-    async function initCamera() {
+    async function loadData() {
       try {
-        const stream = await navigator.mediaDevices.getUserMedia({
-          video: {
-            facingMode: { ideal: "environment" },
-            width: { ideal: 1920 },
-            height: { ideal: 1080 }
-          }
-        });
-        video.srcObject = stream;
-        addLog("Camera active.", "info");
-      } catch (err) {
-        addLog("Camera access denied/failed: " + err.message, "err");
-      }
-    }
-
-    // Capture & binarize the reticle region
-    function captureFrame() {
-      if (video.videoWidth === 0) return null;
-      const ctx = canvas.getContext('2d', { willReadFrequently: true });
-
-      // Crop reticle coordinates (centered, 80% width, 40% height)
-      const cropW = video.videoWidth * 0.8;
-      const cropH = video.videoHeight * 0.4;
-      const startX = (video.videoWidth - cropW) / 2;
-      const startY = (video.videoHeight * 0.3) - (cropH / 2);
-
-      canvas.width = cropW;
-      canvas.height = cropH;
-
-      ctx.drawImage(video, startX, startY, cropW, cropH, 0, 0, cropW, cropH);
-
-      // Simple contrast/threshold adjustment to make text crisp
-      const imgData = ctx.getImageData(0, 0, cropW, cropH);
-      const data = imgData.data;
-      for (let i = 0; i < data.length; i += 4) {
-        const avg = (data[i] + data[i+1] + data[i+2]) / 3;
-        // Text in Maple is dark/gray on light background or colored
-        // Sharpen text borders
-        const val = avg > 165 ? 255 : (avg < 90 ? 0 : avg);
-        data[i] = val;
-        data[i+1] = val;
-        data[i+2] = val;
-      }
-      ctx.putImageData(imgData, 0, 0);
-
-      return canvas.toDataURL('image/png');
-    }
-
-    // Parse OCR Output
-    function parseMapleText(text) {
-      const items = [];
-      const lines = text.split('\n')
-        .map(l => l.trim())
-        .filter(l => l.length > 0);
-
-      for (let i = 0; i < lines.length; i++) {
-        const line = lines[i];
+        const response = await fetch(SCRIPT_URL);
+        const data = await response.json();
         
-        // Match price patterns like "1 for 99 mesos", "99 mesos", "1 for 12,000", etc.
-        const priceMatch = line.match(/(?:for\s+)?([0-9]{1,3}(?:,[0-9]{3})*|\d+)\s*meso/i);
+        const tbody = document.getElementById('tableBody');
+        
+        data.forEach(row => {
+          if (!row.name) return; // Skip empty rows
+          
+          const tr = document.createElement('tr');
+          
+          // Format date nicely
+          const date = new Date(row.date).toLocaleDateString() + " " + new Date(row.date).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
+          
+          // Format price with commas
+          const formattedPrice = Number(row.price).toLocaleString();
+          
+          // Badge for status
+          const statusBadge = row.status === "SOLD" 
+            ? `<span class="status-sold">SOLD</span>` 
+            : `<span class="status-listed">LISTED</span>`;
 
-        if (priceMatch && i > 0) {
-          const rawPrice = priceMatch[1].replace(/,/g, '');
-          const priceNum = parseInt(rawPrice, 10);
-          const rawName = lines[i - 1];
-
-          // Clean item name
-          const cleanName = rawName.replace(/[^a-zA-Z0-9\s'-]/g, '').trim();
-
-          // Basic sold detection: sold items in Maple Classic turn faded/gray
-          // OCR often drops or misreads faded text as faint characters, or you can flag names
-          const isFaded = rawName.includes('~') || rawName.length < 3; 
-
-          if (cleanName.length >= 3 && !isNaN(priceNum)) {
-            items.push({
-              name: cleanName,
-              price: priceNum,
-              isSold: false // Will toggle if gray pattern matches
-            });
-          }
-        }
-      }
-      return items;
-    }
-
-    // Send to Google Apps Script
-    async function postToSheet(items) {
-      addLog(`Sending ${items.length} items to Apps Script...`, "info");
-      
-      try {
-        // Send as text/plain to avoid CORS preflight rejection by Google
-        const response = await fetch(SCRIPT_URL, {
-          method: "POST",
-          headers: { "Content-Type": "text/plain;charset=utf-8" },
-          body: JSON.stringify(items)
+          tr.innerHTML = `
+            <td>${date}</td>
+            <td><strong>${row.name}</strong></td>
+            <td class="price-cell" data-sort="${row.price}">${formattedPrice}</td>
+            <td>${statusBadge}</td>
+          `;
+          tbody.appendChild(tr);
         });
 
-        const resText = await response.text();
-        addLog(`Server Response: ${resText}`, "success");
-      } catch (err) {
-        // Even if browser says network err due to Google redirect, check if payload passed
-        addLog(`Fetch note: ${err.message}. If Sheet updated, redirect was swallowed.`, "warn");
+        document.getElementById('loading').style.display = 'none';
+        document.getElementById('marketTable').style.display = 'table';
+        
+        // Initialize the interactive table
+        $('#marketTable').DataTable({
+          "order": [[ 1, "asc" ], [ 2, "asc" ]], // Default sort: By Name, then by Price lowest to highest
+          "pageLength": 50
+        });
+
+      } catch (error) {
+        document.getElementById('loading').innerText = "Error loading data.";
+        console.error(error);
       }
     }
 
-    // Main Scanning Loop
-    async function scanCycle() {
-      if (!isScanning) return;
-
-      const imgData = captureFrame();
-      if (!imgData) {
-        timer = setTimeout(scanCycle, 1500);
-        return;
-      }
-
-      addLog("Analyzing frame OCR...", "info");
-      try {
-        const { data: { text } } = await tesseractWorker.recognize(imgData);
-        
-        // Print raw text summary to inspect OCR health
-        const previewText = text.replace(/\n+/g, ' | ').trim();
-        if (previewText) {
-          addLog(`OCR Raw: "${previewText.slice(0, 80)}..."`, "log-raw");
-        } else {
-          addLog("OCR read empty string. Adjust distance/lighting.", "warn");
-        }
-
-        const detected = parseMapleText(text);
-
-        if (detected.length > 0) {
-          detected.forEach(it => {
-            addLog(`Detected: ${it.name} -> ${it.price} (${it.isSold ? 'SOLD +' : 'LISTED -'})`, "info");
-          });
-          await postToSheet(detected);
-        } else {
-          addLog("No valid '[Item] + [X mesos]' pairs found.", "warn");
-        }
-
-      } catch (err) {
-        addLog("Scan error: " + err.message, "err");
-      }
-
-      if (isScanning) {
-        timer = setTimeout(scanCycle, 3000);
-      }
-    }
-
-    startBtn.addEventListener('click', async () => {
-      if (!isScanning) {
-        startBtn.disabled = true;
-        startBtn.innerText = "Initializing OCR...";
-        
-        if (!tesseractWorker) {
-          addLog("Loading Tesseract OCR model (~15MB)...", "info");
-          tesseractWorker = await Tesseract.createWorker('eng');
-          addLog("OCR Engine loaded.", "info");
-        }
-
-        isScanning = true;
-        startBtn.disabled = false;
-        startBtn.innerText = "Stop Scanning";
-        startBtn.style.background = "#ff4444";
-        scanCycle();
-      } else {
-        isScanning = false;
-        clearTimeout(timer);
-        startBtn.innerText = "Start Scanner";
-        startBtn.style.background = "#00ff66";
-        addLog("Scanner halted.", "info");
-      }
-    });
-
-    initCamera();
+    loadData();
   </script>
 </body>
 </html>
